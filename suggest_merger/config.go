@@ -1,4 +1,4 @@
-package merger
+package suggest_merger
 
 import (
   "encoding/json"

@@ -1,4 +1,4 @@
-package merger
+package suggest_merger
 
 import (
   "bufio"
@@ -13,16 +13,42 @@ import (
   "os"
   "sort"
   "strings"
+  "time"
 )
 
-type SymbolStat struct {
+type CharacterStat struct {
   Count      int
   StartIndex int
   EndIndex   int
 }
 
-func getSymbolStatByPrefixes(inputFilePath string) (map[string]*SymbolStat, error) {
-  symbolsMapCounter := map[string]*SymbolStat{}
+func isFileSorted(inputFilePath string) bool {
+  file, err := os.Open(inputFilePath)
+  if err != nil {
+    return false
+  }
+  defer file.Close()
+
+  setOfFirstCharacters := make([]string, 0)
+
+  scanner := bufio.NewScanner(file)
+  for scanner.Scan() {
+    line := strings.TrimSpace(scanner.Text())
+
+    if len(line) == 0 {
+      continue
+    }
+
+    setOfFirstCharacters = append(setOfFirstCharacters, strings.ToLower(line[0:1]))
+  }
+
+  return sort.SliceIsSorted(setOfFirstCharacters, func(i, j int) bool {
+    return setOfFirstCharacters[i] <= setOfFirstCharacters[j]
+  })
+}
+
+func getCharacterStatByPrefixes(inputFilePath string) (map[string]*CharacterStat, error) {
+  symbolsMapCounter := map[string]*CharacterStat{}
 
   file, err := os.Open(inputFilePath)
   if err != nil {
@@ -32,7 +58,7 @@ func getSymbolStatByPrefixes(inputFilePath string) (map[string]*SymbolStat, erro
 
   scanner := bufio.NewScanner(file)
   lineNumber := 0
-  currentSymbol := ""
+  currentCharacter := ""
   currentStartPos, currentEndPos, currentCounter := 0, 0, 0
 
   for scanner.Scan() {
@@ -42,12 +68,12 @@ func getSymbolStatByPrefixes(inputFilePath string) (map[string]*SymbolStat, erro
       continue
     }
 
-    firstLineSymbol := strings.ToLower(line[0:1])
+    firstLineCharacter := strings.ToLower(line[0:1])
 
-    if firstLineSymbol != currentSymbol {
-      if currentSymbol != "" {
+    if firstLineCharacter != currentCharacter {
+      if currentCharacter != "" {
         currentEndPos += currentCounter - 1
-        symbolsMapCounter[currentSymbol] = &SymbolStat{
+        symbolsMapCounter[currentCharacter] = &CharacterStat{
           Count:      currentCounter,
           StartIndex: currentStartPos,
           EndIndex:   currentEndPos,
@@ -56,7 +82,7 @@ func getSymbolStatByPrefixes(inputFilePath string) (map[string]*SymbolStat, erro
         currentEndPos = currentStartPos
         currentCounter = 0
       }
-      currentSymbol = firstLineSymbol
+      currentCharacter = firstLineCharacter
     }
 
     currentEndPos += len(line)
@@ -68,9 +94,9 @@ func getSymbolStatByPrefixes(inputFilePath string) (map[string]*SymbolStat, erro
     }
   }
   // processing for last symbols
-  if currentSymbol != "" {
+  if currentCharacter != "" {
     currentEndPos += currentCounter - 1
-    symbolsMapCounter[currentSymbol] = &SymbolStat{
+    symbolsMapCounter[currentCharacter] = &CharacterStat{
       Count:      currentCounter,
       StartIndex: currentStartPos,
       EndIndex:   currentEndPos,
@@ -92,7 +118,7 @@ func getIndexOfMin(items []float64) int {
   return minIdx
 }
 
-func getDistributionByParts(statMap map[string]*SymbolStat, countParts int) (map[int][]string, error) {
+func getDistributionByParts(statMap map[string]*CharacterStat, countParts int) (map[int][]string, error) {
   keys := make([]string, 0, len(statMap))
   sumWeights := 0
 
@@ -183,7 +209,11 @@ func LoadItemsByPart(inputFilePath string, startIndex int, endIndex int, policy 
 }
 
 func DoBuildShardedSuggest(inputFilePath string, suggestDataPath string, maxItemsPerPrefix int, suffixFactor float64, disableNormalizedParts bool, countOutputFiles int) {
-  statMap, err := getSymbolStatByPrefixes(inputFilePath)
+  if !isFileSorted(inputFilePath) {
+    log.Fatalf("file is not sorted, use command: sort filename")
+  }
+
+  statMap, err := getCharacterStatByPrefixes(inputFilePath)
   if err != nil {
     log.Fatalln(err)
   }
@@ -194,6 +224,7 @@ func DoBuildShardedSuggest(inputFilePath string, suggestDataPath string, maxItem
   }
 
   policy := tools.GetPolicy()
+  version := uint64(time.Now().Unix())
   for shardNumber, prefixes := range parts {
     var items []*suggest.Item
 
@@ -209,6 +240,7 @@ func DoBuildShardedSuggest(inputFilePath string, suggestDataPath string, maxItem
     if err != nil {
       log.Fatalln(err)
     }
+    suggest.SetVersion(suggestData, version)
 
     log.Printf("marshalling suggest as proto")
     b, err := proto.Marshal(suggestData)
